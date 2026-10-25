@@ -103,10 +103,8 @@
       return list.filter(function (v) { return /enhanced|premium|natural|neural|siri/i.test(v.name); })[0] ||
         list.filter(function (v) { return v['default']; })[0] || list[0] || null;
     }
-    var current = null;
     function stop() {
       token++;
-      if (current) { current.onended = current.onerror = null; try { current.pause(); } catch (e) { /* ignore */ } current = null; }
       if (supported) { try { synth.cancel(); } catch (e) { /* ignore */ } }
     }
     // Speak chunks in order; onDone runs only if not interrupted
@@ -127,20 +125,8 @@
       }
       next();
     }
-    // Play a pre-recorded clip; fall back to the device voice if it is missing or blocked
-    function clip(url, chunks, onDone) {
-      stop();
-      if (!window.Audio || !url) return say(chunks, onDone);
-      var my = token, a = new window.Audio(url);
-      current = a;
-      a.playbackRate = state.settings.rate;
-      a.onended = function () { if (my === token && onDone) onDone(); };
-      a.onerror = function () { if (my === token) say(chunks, onDone); };
-      var p = a.play();
-      if (p && p.catch) p.catch(function () { if (my === token) say(chunks, onDone); });
-    }
     if (supported && synth.addEventListener) synth.addEventListener('voiceschanged', function () { /* list refreshes on next read */ });
-    return { supported: supported, say: say, clip: clip, stop: stop, voices: voices };
+    return { supported: supported, say: say, stop: stop, voices: voices };
   })();
 
   // Pre-filled GitHub issue form (.github/ISSUE_TEMPLATE/card-report.yml) for a card
@@ -155,7 +141,6 @@
   }
   function feedbackUrl() { return REPO + '/issues/new?template=feedback.yml'; }
 
-  function clipUrl(card, side) { return 'audio/' + card.id + '-' + side + '.mp3'; }
   function answerSpeechChunks(card) {
     var chunks = [];
     if (card.mnemonic) chunks = chunks.concat(Core.chunkForSpeech('Acronym: ' + card.mnemonic + '.'));
@@ -185,10 +170,33 @@
     ]);
   }
 
+  function deckTile(title, subtitle, reviewed, total, onclick) {
+    return h('button', { class: 'card rating', onclick: onclick },
+      h('div', { class: 'rating-left' },
+        h('div', { class: 'rating-title', text: title }),
+        h('div', { class: 'muted small', text: subtitle })),
+      h('div', { class: 'rating-right' },
+        h('div', { class: 'count', text: reviewed + '/' + total }),
+        h('div', { class: 'muted tiny', text: 'reviewed' })));
+  }
+
+  var CFI_IDS = ['cfi-foi', 'cfi-acronyms', 'cfi-regs'];
+
   function viewHome() {
     var summary = Core.progressSummary(data, idx, state);
     var byId = {};
     summary.decks.forEach(function (d) { byId[d.id] = d; });
+    var cfi = { reviewed: 0, total: 0 };
+    CFI_IDS.forEach(function (id) { cfi.reviewed += byId[id].reviewed; cfi.total += byId[id].total; });
+    var tiles = [];
+    data.decks.forEach(function (d) {
+      if (CFI_IDS.indexOf(d.id) !== -1) {
+        if (d.id === CFI_IDS[0]) tiles.push(deckTile('🎓 CFI Certificate', 'FOI · Acronyms · Regulations', cfi.reviewed, cfi.total, function () { go('#/cfi'); }));
+        return;
+      }
+      var s = byId[d.id];
+      tiles.push(deckTile(d.icon + ' ' + d.title, d.subtitle, s.reviewed, s.total, function () { go('#/deck/' + d.id); }));
+    });
     render([
       h('header', { class: 'hero' },
         h('h1', { text: '✈️ Pilot Oral Exam Flashcards' }),
@@ -199,19 +207,24 @@
           h('button', { class: 'chip', onclick: function () { go('#/progress'); } }, '📊 Progress'),
           h('button', { class: 'chip', onclick: function () { go('#/resources'); } }, '📚 FAA Resources'),
           h('button', { class: 'chip', onclick: function () { go('#/settings'); } }, '⚙️ Settings')),
-        data.decks.map(function (d) {
-          var s = byId[d.id];
-          return h('button', { class: 'card rating', onclick: function () { go('#/deck/' + d.id); } },
-            h('div', { class: 'rating-left' },
-              h('div', { class: 'rating-title', text: d.icon + ' ' + d.title }),
-              h('div', { class: 'muted small', text: d.subtitle })),
-            h('div', { class: 'rating-right' },
-              h('div', { class: 'count', text: s.reviewed + '/' + s.total }),
-              h('div', { class: 'muted tiny', text: 'reviewed' })));
-        }),
+        tiles,
         h('footer', { class: 'foot' },
           h('a', { href: feedbackUrl(), target: '_blank', rel: 'noopener' }, '💬 Send feedback or report an error'),
           h('a', { href: '#/about' }, '⚠️ Disclaimer')))
+    ]);
+  }
+
+  function viewCfi() {
+    var summary = Core.progressSummary(data, idx, state);
+    var byId = {};
+    summary.decks.forEach(function (d) { byId[d.id] = d; });
+    render([
+      header('🎓 CFI Certificate', 'Choose a section', '#/'),
+      h('main', { class: 'content' },
+        CFI_IDS.map(function (id) {
+          var d = idx.deckById[id], s = byId[id];
+          return deckTile(d.icon + ' ' + d.title, d.subtitle, s.reviewed, s.total, function () { go('#/deck/' + id); });
+        }))
     ]);
   }
 
@@ -406,9 +419,9 @@
     // Reads only the current card: question, then the answer
     function readCard() {
       paintRead(true);
-      Speech.clip(clipUrl(card, 'q'), Core.chunkForSpeech('Question. ' + card.question), function () {
+      Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
         showAnswer();
-        Speech.clip(clipUrl(card, 'a'), answerSpeechChunks(card), function () { paintRead(false); });
+        Speech.say(answerSpeechChunks(card), function () { paintRead(false); });
       });
     }
 
@@ -430,13 +443,13 @@
     // Hands-free: question → think pause → answer → next card
     function playCard() {
       if (!listening) return;
-      Speech.clip(clipUrl(card, 'q'), Core.chunkForSpeech('Question. ' + card.question), function () {
+      Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
         if (!listening) return;
         var wait = revealed ? 400 : state.settings.think * 1000;
         timer = setTimeout(function () {
           if (!listening) return;
           showAnswer();
-          Speech.clip(clipUrl(card, 'a'), answerSpeechChunks(card), function () {
+          Speech.say(answerSpeechChunks(card), function () {
             if (!listening) return;
             timer = setTimeout(function () {
               if (!listening) return;
@@ -562,8 +575,7 @@
             h('div', { class: 'res-title', text: r.title }),
             h('div', { class: 'muted tiny', text: r.subtitle }));
         })),
-        h('p', { class: 'muted center small', text: 'All resources link to official FAA websites' }),
-        h('p', { class: 'muted center small', text: 'Narration voice: LibriTTS-R (CC BY 4.0), via Piper' }))
+        h('p', { class: 'muted center small', text: 'All resources link to official FAA websites' }))
     ]);
   }
 
@@ -683,6 +695,7 @@
     switch (parts[0]) {
       case undefined: return viewHome();
       case 'deck': return viewDeck(parts[1]);
+      case 'cfi': return viewCfi();
       case 'study': {
         var i = parseInt(parts[3], 10);
         return viewStudy(parts[1], decodeURIComponent(parts[2] || 'all'), isNaN(i) ? undefined : i);
