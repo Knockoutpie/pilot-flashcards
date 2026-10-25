@@ -103,8 +103,10 @@
       return list.filter(function (v) { return /enhanced|premium|natural|neural|siri/i.test(v.name); })[0] ||
         list.filter(function (v) { return v['default']; })[0] || list[0] || null;
     }
+    var current = null;
     function stop() {
       token++;
+      if (current) { current.onended = current.onerror = null; try { current.pause(); } catch (e) { /* ignore */ } current = null; }
       if (supported) { try { synth.cancel(); } catch (e) { /* ignore */ } }
     }
     // Speak chunks in order; onDone runs only if not interrupted
@@ -125,8 +127,20 @@
       }
       next();
     }
+    // Play a pre-recorded clip; fall back to the device voice if it is missing or blocked
+    function clip(url, chunks, onDone) {
+      stop();
+      if (!window.Audio || !url) return say(chunks, onDone);
+      var my = token, a = new window.Audio(url);
+      current = a;
+      a.playbackRate = state.settings.rate;
+      a.onended = function () { if (my === token && onDone) onDone(); };
+      a.onerror = function () { if (my === token) say(chunks, onDone); };
+      var p = a.play();
+      if (p && p.catch) p.catch(function () { if (my === token) say(chunks, onDone); });
+    }
     if (supported && synth.addEventListener) synth.addEventListener('voiceschanged', function () { /* list refreshes on next read */ });
-    return { supported: supported, say: say, stop: stop, voices: voices };
+    return { supported: supported, say: say, clip: clip, stop: stop, voices: voices };
   })();
 
   // Pre-filled GitHub issue form (.github/ISSUE_TEMPLATE/card-report.yml) for a card
@@ -141,6 +155,7 @@
   }
   function feedbackUrl() { return REPO + '/issues/new?template=feedback.yml'; }
 
+  function clipUrl(card, side) { return 'audio/' + card.id + '-' + side + '.mp3'; }
   function answerSpeechChunks(card) {
     var chunks = [];
     if (card.mnemonic) chunks = chunks.concat(Core.chunkForSpeech('Acronym: ' + card.mnemonic + '.'));
@@ -391,9 +406,9 @@
     // Reads only the current card: question, then the answer
     function readCard() {
       paintRead(true);
-      Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
+      Speech.clip(clipUrl(card, 'q'), Core.chunkForSpeech('Question. ' + card.question), function () {
         showAnswer();
-        Speech.say(answerSpeechChunks(card), function () { paintRead(false); });
+        Speech.clip(clipUrl(card, 'a'), answerSpeechChunks(card), function () { paintRead(false); });
       });
     }
 
@@ -415,13 +430,13 @@
     // Hands-free: question → think pause → answer → next card
     function playCard() {
       if (!listening) return;
-      Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
+      Speech.clip(clipUrl(card, 'q'), Core.chunkForSpeech('Question. ' + card.question), function () {
         if (!listening) return;
         var wait = revealed ? 400 : state.settings.think * 1000;
         timer = setTimeout(function () {
           if (!listening) return;
           showAnswer();
-          Speech.say(answerSpeechChunks(card), function () {
+          Speech.clip(clipUrl(card, 'a'), answerSpeechChunks(card), function () {
             if (!listening) return;
             timer = setTimeout(function () {
               if (!listening) return;
@@ -547,7 +562,8 @@
             h('div', { class: 'res-title', text: r.title }),
             h('div', { class: 'muted tiny', text: r.subtitle }));
         })),
-        h('p', { class: 'muted center small', text: 'All resources link to official FAA websites' }))
+        h('p', { class: 'muted center small', text: 'All resources link to official FAA websites' }),
+        h('p', { class: 'muted center small', text: 'Narration voice: LibriTTS-R (CC BY 4.0), via Piper' }))
     ]);
   }
 
