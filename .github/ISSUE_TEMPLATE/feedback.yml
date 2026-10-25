@@ -1,0 +1,17 @@
+name: General feedback or idea
+description: Suggestions, bugs in the app, or missing topics
+title: "[feedback] "
+labels: ["feedback"]
+body:
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+      placeholder: What would make the flashcards better? Did something not work?
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device / browser (optional)
+      placeholder: e.g. iPhone 15, Safari

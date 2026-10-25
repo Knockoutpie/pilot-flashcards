@@ -92,6 +92,14 @@ a { color: var(--primary); }
 .glance ul { margin: 0; padding-left: 18px; }
 .glance li { margin: 3px 0; }
 .full-label { text-transform: uppercase; letter-spacing: 0.06em; margin: 4px 0 6px; }
+.btn.listen { margin-top: 12px; background: transparent; border: 1px solid var(--primary); color: var(--primary); }
+.listen-bar {
+  position: sticky; top: 64px; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--primary); color: #fff; font-weight: 600;
+}
+.small-btn { padding: 6px 12px; background: rgba(255, 255, 255, 0.2); color: #fff; }
+.report { color: var(--muted); text-decoration: none; }
+.report:hover { text-decoration: underline; }
 .study-top { display: flex; justify-content: center; margin-bottom: 10px; }
 .modes { max-width: 360px; width: 100%; }
 .continue { border-color: var(--primary); }

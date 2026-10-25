@@ -10,6 +10,7 @@
   'use strict';
 
   var Core = window.Core;
+  var REPO = 'https://github.com/Knockoutpie/pilot-flashcards';
 
   var data = null, idx = null;
   var storage = null;
@@ -128,6 +129,18 @@
     return { supported: supported, say: say, stop: stop, voices: voices };
   })();
 
+  // Pre-filled GitHub issue form (.github/ISSUE_TEMPLATE/card-report.yml) for a card
+  function reportUrl(card) {
+    var deck = idx.deckById[card.deck];
+    var q = 'template=card-report.yml' +
+      '&title=' + encodeURIComponent('[' + card.id + '] ' + card.question.slice(0, 70)) +
+      '&card=' + encodeURIComponent(card.id + ' — ' + deck.title + ' · ' + card.category) +
+      '&question=' + encodeURIComponent(card.question) +
+      '&reference=' + encodeURIComponent(card.reference);
+    return REPO + '/issues/new?' + q;
+  }
+  function feedbackUrl() { return REPO + '/issues/new?template=feedback.yml'; }
+
   function answerSpeechChunks(card) {
     var chunks = [];
     if (card.mnemonic) chunks = chunks.concat(Core.chunkForSpeech('Acronym: ' + card.mnemonic + '.'));
@@ -182,6 +195,7 @@
               h('div', { class: 'muted tiny', text: 'reviewed' })));
         }),
         h('footer', { class: 'foot' },
+          h('a', { href: feedbackUrl(), target: '_blank', rel: 'noopener' }, '💬 Send feedback or report an error'),
           h('a', { href: '#/about' }, '⚠️ Disclaimer')))
     ]);
   }
@@ -263,15 +277,24 @@
         h('main', { class: 'content' }, h('p', { class: 'muted center', text: 'No cards here yet.' }))]);
     }
 
-    var index = 0, card = null, revealed = false, listening = false, timer = null;
+    var index = 0, card = null, revealed = false, listening = false, reading = false, timer = null;
     var hdr = header(deck.icon + ' ' + deck.title, modeLabel(mode), '#/deck/' + deckId);
     var bar = h('div', { class: 'pfill' });
     var cardSlot = h('div', { class: 'card-slot' });
     var prevBtn = h('button', { class: 'btn', onclick: function () { stopListening(); move(-1); } }, '◀ Previous');
     var nextBtn = h('button', { class: 'btn', onclick: function () { stopListening(); move(1); } }, 'Next ▶');
     var markBtn = h('button', { class: 'btn icon', onclick: toggleMark });
-    var readBtn = Speech.supported ? h('button', { class: 'btn icon', onclick: function () { stopListening(); readCard(); } }, '🔊 Read') : null;
-    var listenBtn = Speech.supported ? h('button', { class: 'btn icon', onclick: function () { if (listening) stopListening(); else startListening(); } }, '🎧 Listen') : null;
+    // Read = this card only; Listen = hands-free through every card
+    var readBtn = Speech.supported ? h('button', { class: 'btn icon', 'aria-label': 'Read this card aloud', onclick: function () {
+      if (reading) { stopReading(); return; }
+      stopListening(); readCard();
+    } }, '🔊 Read card') : null;
+    var listenBtn = Speech.supported ? h('button', { class: 'btn block listen', onclick: function () { if (listening) stopListening(); else startListening(); } },
+      '🎧 Listen to all cards (hands-free)') : null;
+    var listenStatus = h('span', { class: 'listen-status' });
+    var listenBar = Speech.supported ? h('div', { class: 'listen-bar', hidden: true, role: 'status' },
+      listenStatus, h('button', { class: 'btn small-btn', onclick: function () { stopListening(); } }, '⏹ Stop')) : null;
+    var reportLink = h('a', { class: 'report', target: '_blank', rel: 'noopener' }, '🚩 Report a problem with this card');
     var quizBtn = h('button', { class: 'seg', onclick: function () { setMode('quiz'); } }, '❓ Quiz');
     var studyBtn = h('button', { class: 'seg', onclick: function () { setMode('study'); } }, '👀 Study');
     var revealBtn, answerBox;
@@ -338,6 +361,8 @@
       prevBtn.disabled = index === 0;
       nextBtn.disabled = index === order.length - 1;
       paintMark();
+      reportLink.setAttribute('href', reportUrl(card));
+      if (listening) listenStatus.textContent = '🎧 Listening · card ' + (index + 1) + ' of ' + order.length;
       // remember position; update the address without navigating (no reload, no flash)
       session.index = index; session.t = now(); save();
       try { history.replaceState(null, '', base + index); } catch (e) { /* ignore */ }
@@ -347,21 +372,37 @@
     function move(delta) {
       var next = index + delta;
       if (next < 0 || next >= order.length) return;
+      stopReading();
       Speech.stop();
       showCard(next);
     }
 
+    function paintRead(on) {
+      reading = on;
+      if (!readBtn) return;
+      readBtn.textContent = on ? '⏹ Stop' : '🔊 Read card';
+      readBtn.className = 'btn icon' + (on ? ' on' : '');
+    }
+    function stopReading() {
+      if (!reading) return;
+      paintRead(false);
+      Speech.stop();
+    }
+    // Reads only the current card: question, then the answer
     function readCard() {
+      paintRead(true);
       Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
         showAnswer();
-        Speech.say(answerSpeechChunks(card));
+        Speech.say(answerSpeechChunks(card), function () { paintRead(false); });
       });
     }
 
     function startListening() {
+      stopReading();
       listening = true;
-      listenBtn.textContent = '⏹ Stop';
-      listenBtn.className = 'btn icon on';
+      listenBtn.hidden = true;
+      listenBar.hidden = false;
+      listenStatus.textContent = '🎧 Listening · card ' + (index + 1) + ' of ' + order.length;
       playCard();
     }
     function stopListening() {
@@ -369,7 +410,7 @@
       listening = false;
       clearTimeout(timer);
       Speech.stop();
-      if (listenBtn) { listenBtn.textContent = '🎧 Listen'; listenBtn.className = 'btn icon'; }
+      if (listenBtn) { listenBtn.hidden = false; listenBar.hidden = true; }
     }
     // Hands-free: question → think pause → answer → next card
     function playCard() {
@@ -408,25 +449,28 @@
       h('main', { class: 'content study' },
         h('div', { class: 'study-top' },
           h('div', { class: 'segs modes', role: 'group', 'aria-label': 'Study mode' }, quizBtn, studyBtn)),
+        listenBar,
         h('div', { class: 'pbar thin' }, bar),
         cardSlot,
-        h('div', { class: 'tools' }, markBtn, readBtn, listenBtn),
+        h('div', { class: 'tools' }, markBtn, readBtn),
         h('div', { class: 'row2 nav' }, prevBtn, nextBtn),
+        listenBtn,
         h('p', { class: 'muted tiny center hint', text: Speech.supported
-          ? 'Swipe or ← → · Space reveals · M marks · R reads · L listens'
-          : 'Swipe or ← → · Space reveals · M marks' }))
+          ? 'Swipe or ← → · Space reveals · M marks · R reads this card · L listens to all'
+          : 'Swipe or ← → · Space reveals · M marks' }),
+        h('p', { class: 'center small' }, reportLink))
     ]);
     paintModeToggle();
     showCard(startIndex === undefined ? session.index : startIndex);
 
-    teardown = function () { listening = false; clearTimeout(timer); Speech.stop(); };
+    teardown = function () { listening = false; reading = false; clearTimeout(timer); Speech.stop(); };
     keyHandler = function (e) {
       if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       if (e.key === 'ArrowRight') { stopListening(); move(1); }
       else if (e.key === 'ArrowLeft') { stopListening(); move(-1); }
       else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); showAnswer(); }
       else if (e.key === 'm' || e.key === 'M') toggleMark();
-      else if ((e.key === 'r' || e.key === 'R') && Speech.supported) { stopListening(); readCard(); }
+      else if ((e.key === 'r' || e.key === 'R') && Speech.supported) { if (reading) stopReading(); else { stopListening(); readCard(); } }
       else if ((e.key === 'l' || e.key === 'L') && Speech.supported) { if (listening) stopListening(); else startListening(); }
     };
   }
