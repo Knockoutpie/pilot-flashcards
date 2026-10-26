@@ -85,6 +85,54 @@
     return mode === 'all' ? 'All Topics' : mode === 'random' ? 'Random' : mode === 'review' ? 'Marked for Review' : mode.slice(4);
   }
 
+  // ---------- speech highlighting ----------
+  function wrapWords(root) {
+    var spans = [];
+    if (!root) return spans;
+    (function walk(node) {
+      Array.prototype.slice.call(node.childNodes).forEach(function (n) {
+        if (n.nodeType === 3) {
+          var frag = document.createDocumentFragment();
+          n.nodeValue.split(/(\s+)/).forEach(function (part) {
+            if (!part) return;
+            if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+            var s = document.createElement('span');
+            s.className = 'w';
+            s.textContent = part;
+            spans.push(s);
+            frag.appendChild(s);
+          });
+          node.replaceChild(frag, n);
+        } else if (n.nodeType === 1 && n.tagName !== 'BUTTON') {
+          walk(n);
+        }
+      });
+    })(root);
+    return spans;
+  }
+  function normWord(w) { return w.toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function makeTracker(spans) {
+    if (!spans || !spans.length) return null;
+    var pos = 0, last = null;
+    return function (rest) {
+      var m = /^[^\s]+/.exec(rest);
+      var w = m ? normWord(m[0]) : '';
+      if (!w) return;
+      for (var j = pos; j < spans.length && j < pos + 8; j++) {
+        if (normWord(spans[j].textContent) === w) {
+          if (last) last.classList.remove('hl');
+          spans[j].classList.add('hl');
+          last = spans[j];
+          pos = j + 1;
+          return;
+        }
+      }
+    };
+  }
+  function clearHighlight() {
+    Array.prototype.slice.call(document.querySelectorAll('.w.hl')).forEach(function (el) { el.classList.remove('hl'); });
+  }
+
   // ---------- speech (Web Speech API) ----------
   var Speech = (function () {
     var synth = window.speechSynthesis;
@@ -105,20 +153,23 @@
     }
     function stop() {
       token++;
+      clearHighlight();
       if (supported) { try { synth.cancel(); } catch (e) { /* ignore */ } }
     }
     // Speak chunks in order; onDone runs only if not interrupted
-    function say(chunks, onDone) {
+    function say(chunks, spans, onDone) {
       stop();
       if (!supported || !chunks.length) { if (onDone) onDone(); return; }
-      var my = token, i = 0, voice = pickVoice();
+      var my = token, i = 0, voice = pickVoice(), track = makeTracker(spans);
       function next() {
         if (my !== token) return;
         if (i >= chunks.length) { if (onDone) onDone(); return; }
-        var u = new window.SpeechSynthesisUtterance(chunks[i++]);
+        var part = chunks[i++];
+        var u = new window.SpeechSynthesisUtterance(part);
         if (voice) u.voice = voice;
         u.lang = voice ? voice.lang : 'en-US';
         u.rate = state.settings.rate;
+        u.onboundary = function (e) { if (my === token && track && e.name === 'word') track(part.slice(e.charIndex)); };
         u.onend = next;
         u.onerror = function () { if (my === token) next(); };
         synth.speak(u);
@@ -368,6 +419,7 @@
         h('div', { class: 'answer-text' }, lines));
     }
 
+    var qSpans = [], aSpans = [];
     function showCard(i) {
       index = Math.max(0, Math.min(order.length - 1, i));
       card = idx.byId[order[index]];
@@ -384,6 +436,8 @@
         answerBox);
       cardSlot.textContent = '';
       cardSlot.appendChild(el);
+      qSpans = wrapWords(el.querySelector('.question'));
+      aSpans = wrapWords(answerBox);
       if (state.settings.studyMode === 'study') showAnswer();
       bar.style.width = Core.percent(index + 1, order.length) + '%';
       prevBtn.disabled = index === 0;
@@ -419,9 +473,9 @@
     // Reads only the current card: question, then the answer
     function readCard() {
       paintRead(true);
-      Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
+      Speech.say(Core.chunkForSpeech('Question. ' + card.question), qSpans, function () {
         showAnswer();
-        Speech.say(answerSpeechChunks(card), function () { paintRead(false); });
+        Speech.say(answerSpeechChunks(card), aSpans, function () { paintRead(false); });
       });
     }
 
@@ -443,13 +497,13 @@
     // Hands-free: question → think pause → answer → next card
     function playCard() {
       if (!listening) return;
-      Speech.say(Core.chunkForSpeech('Question. ' + card.question), function () {
+      Speech.say(Core.chunkForSpeech('Question. ' + card.question), qSpans, function () {
         if (!listening) return;
         var wait = revealed ? 400 : state.settings.think * 1000;
         timer = setTimeout(function () {
           if (!listening) return;
           showAnswer();
-          Speech.say(answerSpeechChunks(card), function () {
+          Speech.say(answerSpeechChunks(card), aSpans, function () {
             if (!listening) return;
             timer = setTimeout(function () {
               if (!listening) return;
